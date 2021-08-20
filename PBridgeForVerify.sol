@@ -1,6 +1,4 @@
-
-
-pragma solidity ^0.5.17;
+pragma solidity ^0.5.5;
 
 /**
  * @dev Interface of the ERC20 standard as defined in the EIP. Does not include
@@ -873,7 +871,7 @@ interface IERC20Minter {
     function replaceMinter(address newMinter) external;
 }
 
-contract PBridge {
+contract NerveMultiSigWalletII {
     using Address for address;
     using SafeERC20 for IERC20;
     using SafeMath for uint256;
@@ -889,17 +887,19 @@ contract PBridge {
     }
     bool public upgrade = false;
     address public upgradeContractAddress = address(0);
-    // max managers
+    // 最大管理员数量
     uint public max_managers = 15;
-    // multi sign rate 66%
+    // 最小管理员数量
+    uint public min_managers = 3;
+    // 最小签名比例 66%
     uint public rate = 66;
-    // signature Length
+    // 签名字节长度
     uint public signatureLength = 65;
-    // multi sign DENOMINATOR
+    // 比例分母
     uint constant DENOMINATOR = 100;
-    // contract version
-    uint8 constant VERSION = 1;
-    // multi sign min signatures
+    // 当前合约版本
+    uint8 constant VERSION = 2;
+    // 当前交易的最小签名数量
     uint8 public current_min_signatures;
     address public owner;
     mapping(address => uint8) private seedManagers;
@@ -912,6 +912,7 @@ contract PBridge {
 
     constructor(address[] memory _managers) public{
         require(_managers.length <= max_managers, "Exceeded the maximum number of managers");
+        require(_managers.length >= min_managers, "Not reaching the min number of managers");
         owner = msg.sender;
         managerArray = _managers;
         for (uint8 i = 0; i < managerArray.length; i++) {
@@ -920,7 +921,7 @@ contract PBridge {
             seedManagerArray.push(managerArray[i]);
         }
         require(managers[owner] == 0, "Contract creator cannot act as manager");
-        // set multi sign min signatures
+        // 设置当前交易的最小签名数量
         current_min_signatures = calMinSignatures(managerArray.length);
     }
     function() external payable {
@@ -931,29 +932,29 @@ contract PBridge {
         require(bytes(txKey).length == 64, "Fixed length of txKey: 64");
         require(to != address(0), "Withdraw: transfer to the zero address");
         require(amount > 0, "Withdrawal amount must be greater than 0");
-        // Verify completed trx
+        // 校验已经完成的交易
         require(completedTxs[txKey] == 0, "Transaction has been completed");
-        // Verify transfer 
+        // 校验提现金额
         if (isERC20) {
             validateTransferERC20(ERC20, to, amount);
         } else {
             require(address(this).balance >= amount, "This contract address does not have sufficient balance of ether");
         }
         bytes32 vHash = keccak256(abi.encodePacked(txKey, to, amount, isERC20, ERC20, VERSION));
-        // Verify request repeatability
+        // 校验请求重复性
         require(completedKeccak256s[vHash] == 0, "Invalid signatures");
-        // Verify signature
+        // 校验签名
         require(validSignature(vHash, signatures), "Valid signatures fail");
-        // Execute transfer
+        // 执行转账
         if (isERC20) {
             transferERC20(ERC20, to, amount);
         } else {
-            // Actual arrival
+            // 实际到账
             require(address(this).balance >= amount, "This contract address does not have sufficient balance of ether");
             to.transfer(amount);
             emit TransferFunds(to, amount);
         }
-        // Save transaction 
+        // 保存交易数据
         completeTx(txKey, vHash, 1);
         emit TxWithdrawCompleted(txKey);
     }
@@ -962,51 +963,51 @@ contract PBridge {
     function createOrSignManagerChange(string memory txKey, address[] memory adds, address[] memory removes, uint8 count, bytes memory signatures) public isManager {
         require(bytes(txKey).length == 64, "Fixed length of txKey: 64");
         require(adds.length > 0 || removes.length > 0, "There are no managers joining or exiting");
-        // Verify completed transactions
+        // 校验已经完成的交易
         require(completedTxs[txKey] == 0, "Transaction has been completed");
         preValidateAddsAndRemoves(adds, removes);
         bytes32 vHash = keccak256(abi.encodePacked(txKey, adds, count, removes, VERSION));
-        // Verify request repeatability
+        // 校验请求重复性
         require(completedKeccak256s[vHash] == 0, "Invalid signatures");
-        // Verify signature
+        // 校验签名
         require(validSignature(vHash, signatures), "Valid signatures fail");
-        // Change Manager
+        // 变更管理员
         removeManager(removes);
         addManager(adds);
-        // Update the minimum number of signatures
+        // 更新当前交易的最小签名数
         current_min_signatures = calMinSignatures(managerArray.length);
-        // Save transaction 
+        // 保存交易数据
         completeTx(txKey, vHash, 1);
-        // Add event
+        // add event
         emit TxManagerChangeCompleted(txKey);
     }
 
     function createOrSignUpgrade(string memory txKey, address upgradeContract, bytes memory signatures) public isManager {
         require(bytes(txKey).length == 64, "Fixed length of txKey: 64");
-        // Verify completed transactions
+        // 校验已经完成的交易
         require(completedTxs[txKey] == 0, "Transaction has been completed");
         require(!upgrade, "It has been upgraded");
         require(upgradeContract.isContract(), "The address is not a contract address");
-        // Verify
+        // 校验
         bytes32 vHash = keccak256(abi.encodePacked(txKey, upgradeContract, VERSION));
-        // Verify request repeatability
+        // 校验请求重复性
         require(completedKeccak256s[vHash] == 0, "Invalid signatures");
-        // Verify signature
+        // 校验签名
         require(validSignature(vHash, signatures), "Valid signatures fail");
-        // Enable upgraded
+        // 变更可升级
         upgrade = true;
         upgradeContractAddress = upgradeContract;
-        // Save transaction
+        // 保存交易数据
         completeTx(txKey, vHash, 1);
-        // Add event
+        // add event
         emit TxUpgradeCompleted(txKey);
     }
 
     function validSignature(bytes32 hash, bytes memory signatures) internal view returns (bool) {
         require(signatures.length <= 975, "Max length of signatures: 975");
-        // Verify signature
+        // 获取签名列表对应的有效管理员,如果存在错误的签名、或者不是管理员的签名，就失败
         uint sManagersCount = getManagerFromSignatures(hash, signatures);
-        // Verify the minimum number of signatures
+        // 判断最小签名数量
         return sManagersCount >= current_min_signatures;
     }
 
@@ -1020,14 +1021,14 @@ contract PBridge {
             bytes memory sign = signatures.slice(k, signatureLength);
             address mAddress = ecrecovery(hash, sign);
             require(mAddress != address(0), "Signatures error");
-            // Manager count
+            // 管理计数
             if (managers[mAddress] == 1) {
                 signCount++;
                 result[j++] = mAddress;
             }
             k += signatureLength;
         }
-        // Verify address repeatability
+        // 验证地址重复性
         bool suc = repeatability(result);
         delete result;
         require(suc, "Signatures duplicate");
@@ -1079,6 +1080,9 @@ contract PBridge {
             s := mload(add(sig, 64))
             v := byte(0, mload(add(sig, 96)))
         }
+        if(uint256(s) > 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0) {
+            return address(0);
+        }
         // https://github.com/ethereum/go-ethereum/issues/2053
         if (v < 27) {
             v += 27;
@@ -1090,7 +1094,7 @@ contract PBridge {
     }
 
     function preValidateAddsAndRemoves(address[] memory adds, address[] memory removes) internal view {
-        // Verify address
+        // 校验adds
         uint addLen = adds.length;
         for (uint i = 0; i < addLen; i++) {
             address add = adds[i];
@@ -1098,9 +1102,9 @@ contract PBridge {
             require(managers[add] == 0, "The address list that is being added already exists as a manager");
         }
         require(repeatability(adds), "Duplicate parameters for the address to join");
-        // Verify owner
+        // 校验合约创建者不能被添加
         require(validateRepeatability(owner, adds), "Contract creator cannot act as manager");
-        // Verify removes
+        // 校验removes
         require(repeatability(removes), "Duplicate parameters for the address to exit");
         uint removeLen = removes.length;
         for (uint i = 0; i < removeLen; i++) {
@@ -1112,7 +1116,7 @@ contract PBridge {
     }
 
     /*
-     The minimum number of signatures is calculated according to the current number of valid administrators and the minimum signature ratio, rounded up
+     根据 `当前有效管理员数量` 和 `最小签名比例` 计算最小签名数量，向上取整
     */
     function calMinSignatures(uint managerCounts) internal view returns (uint8) {
         require(managerCounts > 0, "Manager Can't empty.");
@@ -1126,6 +1130,7 @@ contract PBridge {
         for (uint i = 0; i < removes.length; i++) {
             delete managers[removes[i]];
         }
+        // 遍历修改前管理员列表
         for (uint i = 0; i < managerArray.length; i++) {
             if (managers[managerArray[i]] == 0) {
                 delete managerArray[i];
@@ -1165,6 +1170,7 @@ contract PBridge {
         require(address(this) != ERC20, "Do nothing by yourself");
         require(ERC20.isContract(), "The address is not a contract address");
         if (isMinterERC20(ERC20)) {
+            // 定制ERC20验证结束
             return;
         }
         IERC20 token = IERC20(ERC20);
@@ -1173,6 +1179,7 @@ contract PBridge {
     }
     function transferERC20(address ERC20, address to, uint256 amount) internal {
         if (isMinterERC20(ERC20)) {
+            // 定制的ERC20，跨链转入以太坊网络即增发
             IERC20Minter minterToken = IERC20Minter(ERC20);
             minterToken.mint(to, amount);
             return;
@@ -1201,17 +1208,18 @@ contract PBridge {
         require(balance >= 0, "No enough balance of token");
         token.safeTransfer(upgradeContractAddress, balance);
         if (isMinterERC20(ERC20)) {
+            // 定制的ERC20，转移增发销毁权限到新多签合约
             IERC20Minter minterToken = IERC20Minter(ERC20);
             minterToken.replaceMinter(upgradeContractAddress);
         }
     }
 
-    // Is Customized ERC20 
+    // 是否定制的ERC20
     function isMinterERC20(address ERC20) public view returns (bool) {
         return minterERC20s[ERC20] > 0;
     }
 
-    // Register Customized ERC20 
+    // 登记定制的ERC20
     function registerMinterERC20(address ERC20) public isOwner {
         require(address(this) != ERC20, "Do nothing by yourself");
         require(ERC20.isContract(), "The address is not a contract address");
@@ -1219,13 +1227,13 @@ contract PBridge {
         minterERC20s[ERC20] = 1;
     }
 
-    // Unregister Customized ERC20 
+    // 取消登记定制的ERC20
     function unregisterMinterERC20(address ERC20) public isOwner {
         require(isMinterERC20(ERC20), "This address is not registered");
         delete minterERC20s[ERC20];
     }
 
-    // crossOut
+    // 从eth网络跨链转出资产(ETH or ERC20)
     function crossOut(string memory to, uint256 amount, address ERC20) public payable returns (bool) {
         address from = msg.sender;
         require(amount > 0, "ERROR: Zero amount");
@@ -1239,6 +1247,7 @@ contract PBridge {
             require(fromBalance >= amount, "No enough balance of the token");
             token.safeTransferFrom(from, address(this), amount);
             if (isMinterERC20(ERC20)) {
+                // 定制的ERC20，从以太坊网络跨链转出token即销毁
                 IERC20Minter minterToken = IERC20Minter(ERC20);
                 minterToken.burn(amount);
             }
