@@ -6,5 +6,5 @@ PChain cross-chain Bridge Contract
 Download go-ethereum, choose the preferred version and build the executable abigen file.
 
 ```sh
-abigen --sol ./contracts/PBridge.sol --pkg pbridge > ./go_abi/pbridge_abi.go
+abigen --sol ./contracts/PBridge.sol --pkg pbridge > ./pbridge_abi/pbridge_abi.go
 ```
