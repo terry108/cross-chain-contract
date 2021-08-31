@@ -43,7 +43,7 @@ contract PBridge {
     // 比例分母
     uint256 constant DENOMINATOR = 100;
     // 当前合约版本
-    uint8 constant VERSION = 2;
+    uint256 constant VERSION = 2;
     // 当前交易的最小签名数量
     uint8 public current_min_signatures;
     address public owner;
@@ -108,7 +108,7 @@ contract PBridge {
             );
         }
         bytes32 vHash = keccak256(
-            abi.encodePacked(txKey, to, amount, isERC20, ERC20, VERSION)
+            abi.encode(txKey, to, amount, isERC20, ERC20, VERSION)
         );
         // 校验请求重复性
         require(completedKeccak256s[vHash] == 0, "Invalid signatures");
@@ -147,7 +147,7 @@ contract PBridge {
         require(completedTxs[txKey] == 0, "Transaction has been completed");
         preValidateAddsAndRemoves(adds, removes);
         bytes32 vHash = keccak256(
-            abi.encodePacked(txKey, adds, count, removes, VERSION)
+            abi.encode(txKey, adds, count, removes, VERSION)
         );
         // 校验请求重复性
         require(completedKeccak256s[vHash] == 0, "Invalid signatures");
@@ -179,7 +179,7 @@ contract PBridge {
         );
         // 校验
         bytes32 vHash = keccak256(
-            abi.encodePacked(txKey, upgradeContract, VERSION)
+            abi.encode(txKey, upgradeContract, VERSION)
         );
         // 校验请求重复性
         require(completedKeccak256s[vHash] == 0, "Invalid signatures");
@@ -500,7 +500,7 @@ contract PBridge {
 
     // 从eth网络跨链转出资产(ETH or ERC20)
     function crossOut(
-        string memory to,
+        string memory to, // chainID(int) + address
         uint256 amount,
         address ERC20
     ) public payable returns (bool) {
